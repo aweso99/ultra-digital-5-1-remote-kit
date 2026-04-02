@@ -629,304 +629,493 @@ function inputIcon(src: InputSource) {
 
 // ── Arduino Code Panel ──────────────────────────────────────────────────────
 const ARDUINO_CODE = `/*
- * Ultra Digital 5.1 Home Theater Remote Kit
- * Target: Arduino UNO (ATmega328P)
- * Audio Processor: FR6311
- * Display: HD44780 16x2 (parallel, 4-bit mode)
- * IR: IRremote v2.0, NEC 32-bit protocol
- * Encoder: Rotary encoder on INT0/INT1
- * Input Selector: FT003 module
+ * ====================================================================
+ *  FR6311  5.1 Remote Kit Firmware  v2.0
+ *  MCU     : ATmega328P  (Arduino UNO / Nano / Pro Mini)
+ *  Audio   : FR6311 6-channel volume controller  (I2C)
+ *  Display : HD44780 16x2 LCD, 4-bit parallel
+ *  Remote  : NEC 32-bit IR  (IRremote v2.0)
+ *  Encoder : Rotary encoder + push-switch
+ *  Storage : AVR EEPROM  (EEPROM.update - wear-safe)
+ *  License : MIT
+ * ====================================================================
  *
- * Channel Layout: FL, FR, SL, SR, CENTER, SUB
- * Master Volume: 0-79
- * Channel Trim:  -15 to +15
+ *  Wiring
+ *  ------
+ *  LCD    RS->4   EN->5   D4->6   D5->7   D6->8   D7->9
+ *  IR     OUT->11
+ *  ENC    CLK->2(INT0)   DT->3   SW->A1
+ *  FR6311 SDA->A4   SCL->A5   ADDR->GND (addr 0x40)
+ *  USB    5V-sense->A2   IR-sense->A3
+ * ====================================================================
  */
 
-#include <IRremote.h>
+#include <Wire.h>
 #include <LiquidCrystal.h>
+#include <IRremote.h>
 #include <EEPROM.h>
 
-// ── Pin Definitions ──────────────────────────────────────────────────────────
-#define IR_RECV_PIN     2
-#define ENC_A           3
-#define ENC_B           4
-#define LCD_RS          8
-#define LCD_EN          9
-#define LCD_D4          10
-#define LCD_D5          11
-#define LCD_D6          12
-#define LCD_D7          13
-#define MUTE_LED        5
-#define STANDBY_LED     6
-#define FR6311_CLK      A0
-#define FR6311_DATA     A1
-#define FR6311_CS       A2
-#define FT003_S0        A3
-#define FT003_S1        A4
-#define FT003_S2        A5
+// -- Pin map ------------------------------------------------------------------
+#define PIN_LCD_RS   4
+#define PIN_LCD_EN   5
+#define PIN_LCD_D4   6
+#define PIN_LCD_D5   7
+#define PIN_LCD_D6   8
+#define PIN_LCD_D7   9
+#define PIN_IR      11
+#define PIN_ENC_CLK  2    // INT0
+#define PIN_ENC_DT   3
+#define PIN_ENC_SW  A1
+#define PIN_USB_5V  A2
+#define PIN_USB_IR  A3
 
-// ── IR Remote Hex Map ────────────────────────────────────────────────────────
-#define IR_VOL_UP       0x20DF40BF
-#define IR_VOL_DOWN     0x20DFC03F
-#define IR_MUTE         0x20DF906F
-#define IR_STANDBY      0x20DF10EF
-#define IR_DVD          0x20DF00FF
-#define IR_USB          0x20DF807F
-#define IR_AUX1         0x20DF8877
-#define IR_AUX2         0x20DF48B7
-#define IR_AUX3         0x20DFC837
-#define IR_FT_AUX       0x20DF28D7
-#define IR_FT_OPT       0x20DFA857
-#define IR_FT_COAX      0x20DF6897
-#define IR_FT_HDMI      0x20DFE817
-#define IR_MODE_STEREO  0x20DF18E7
-#define IR_MODE_MOVIE   0x20DF9867
-#define IR_MODE_MUSIC   0x20DF58A7
-#define IR_MODE_GAME    0x20DFD827
-#define IR_CH_NEXT      0x20DF30CF
-#define IR_TRIM_UP      0x20DFB04F
-#define IR_TRIM_DOWN    0x20DF708F
+// -- FR6311 I2C ---------------------------------------------------------------
+// ADDR pin: GND=0x40  Float=0x41  VCC=0x42
+#define FR6311_ADDR   0x40
 
-// ── EEPROM Addresses ─────────────────────────────────────────────────────────
-#define EEPROM_MASTER   0
-#define EEPROM_FL       1
-#define EEPROM_FR       2
-#define EEPROM_SL       3
-#define EEPROM_SR       4
-#define EEPROM_CENTER   5
-#define EEPROM_SUB      6
-#define EEPROM_BASS     7
-#define EEPROM_TREBLE   8
-#define EEPROM_GAIN     9
-#define EEPROM_INPUT    10
-#define EEPROM_SURR     11
+// Register map - verify against your board datasheet before use
+#define FR_MASTER     0x00
+#define FR_FL         0x01
+#define FR_FR_REG     0x02
+#define FR_CENTER     0x03
+#define FR_SUB        0x04
+#define FR_RL         0x05
+#define FR_RR         0x06
+#define FR_BASS       0x07
+#define FR_TREBLE     0x08
+#define FR_GAIN       0x09
+#define FR_SURROUND   0x0A
+#define FR_INPUT      0x0B
 
-// ── Channel Enum ─────────────────────────────────────────────────────────────
-enum Channel { CH_FL=0, CH_FR, CH_SL, CH_SR, CH_CENTER, CH_SUB, CH_COUNT };
-const char* CH_NAMES[] = { "FL", "FR", "SL", "SR", "CTR", "SUB" };
+// -- IR codes (32-bit NEC) ----------------------------------------------------
+#define IR_STANDBY      0x807F827DUL
+#define IR_MUTE         0x807F42BDUL
+#define IR_DVD          0x807F02FDUL
+#define IR_USB_SRC      0x807F629DUL
+#define IR_AUX1         0x807FA25DUL
+#define IR_AUX2         0x807F22DDUL
+#define IR_AUX3         0x807F20DFUL
+#define IR_FT003_SEL    0x807F12EDUL
+#define IR_GAIN_KEY     0x807F52ADUL
+#define IR_GAIN_PLUS    0x807F926DUL
+#define IR_GAIN_MINUS   0x807FB04FUL
+#define IR_USB_PREV     0x807F728DUL
+#define IR_USB_NEXT     0x807F32CDUL
+#define IR_USB_PLAY     0x807FB24DUL
+#define IR_USB_EQ       0x807FD827UL
+#define IR_USB_MODE     0x807F58A7UL
+#define IR_ESC          0x807FF00FUL
+#define IR_SEL_21_51    0x807F30CFUL
+#define IR_FRONT_MINUS  0x807FC03FUL
+#define IR_FRONT_PLUS   0x807F40BFUL
+#define IR_REAR_MINUS   0x807F807FUL
+#define IR_REAR_PLUS    0x807F00FFUL
+#define IR_SUB_MINUS    0x807FD02FUL
+#define IR_SUB_PLUS     0x807FE01FUL
+#define IR_CTR_MINUS    0x807F50AFUL
+#define IR_CTR_PLUS     0x807F609FUL
+#define IR_MSTR_MINUS   0x807F906FUL
+#define IR_MSTR_PLUS    0x807FA05FUL
+#define IR_BASS_MINUS   0x807FC837UL
+#define IR_BASS_PLUS    0x807F48B7UL
+#define IR_TREB_MINUS   0x807F8877UL
+#define IR_TREB_PLUS    0x807F08F7UL
+#define IR_NUM1         0x807F4AB5UL
+#define IR_NUM2         0x807F8A75UL
+#define IR_NUM3         0x807F0AF5UL
+#define IR_NUM4         0x807FE817UL
+#define IR_NUM5         0x807F6897UL
+#define IR_NUM6         0x807FA857UL
+#define IR_NUM7         0x807F6A95UL
+#define IR_NUM8         0x807FAA55UL
+#define IR_NUM9         0x807F2AD5UL
+#define IR_NUM0         0x807F9A65UL
+#define IR_REPEAT_KEY   0x807F5AA5UL
+#define IR_RESET_KEY    0x807F1AE5UL
+#define IR_TEST_TONE    0x807F9867UL
+#define IR_SURROUND_KEY 0x807F18E7UL
+#define IR_NEC_RPT      0xFFFFFFFFUL
 
-enum SurroundMode { MODE_STEREO=0, MODE_MOVIE, MODE_MUSIC, MODE_GAME };
-const char* MODE_NAMES[] = { "STEREO", "MOVIE ", "MUSIC ", "GAME  " };
+// -- EEPROM addresses ---------------------------------------------------------
+#define EE_MASTER  0
+#define EE_FRONT   1
+#define EE_CENTER  2
+#define EE_SUB     3
+#define EE_REAR    4
+#define EE_BASS    5
+#define EE_TREBLE  6
+#define EE_GAIN    7
+#define EE_INPUT   8
+#define EE_SURR    9
 
-enum InputSource { SRC_DVD=0, SRC_USB, SRC_AUX1, SRC_AUX2, SRC_AUX3,
-                   SRC_FT_AUX, SRC_FT_OPT, SRC_FT_COAX, SRC_FT_HDMI, SRC_COUNT };
-const char* SRC_NAMES[] = { "DVD","USB","AUX1","AUX2","AUX3",
-                              "FT:AUX","FT:OPT","FT:COAX","FT:HDMI" };
+// -- Enumerations -------------------------------------------------------------
+enum CtrlMode {
+  CM_MASTER=0, CM_FRONT, CM_CENTER, CM_SUB,
+  CM_REAR, CM_GAIN, CM_BASS, CM_TREBLE, CM_COUNT
+};
+enum SurrMode { SM_OFF=0, SM_MUSIC, SM_MOVIE, SM_MONO, SM_COUNT };
+enum InputSrc { IS_DVD=0, IS_USB, IS_AUX1, IS_AUX2, IS_AUX3, IS_FT003, IS_COUNT };
 
-// ── State ────────────────────────────────────────────────────────────────────
-uint8_t       masterVol   = 40;
-int8_t        chTrim[CH_COUNT] = {0};
-uint8_t       bass        = 7;   // FR6311: 0-14, 7=flat
-uint8_t       treble      = 7;
-uint8_t       gain        = 40;
-bool          muted       = false;
-bool          standby     = false;
-SurroundMode  surroundMode = MODE_MOVIE;
-InputSource   inputSrc    = SRC_DVD;
-Channel       activeChannel = CH_FL;
+const char* CM_LBL[CM_COUNT] = {
+  "MASTER", "FRONT ", "CENTER", "SUB   ",
+  "REAR  ", "GAIN  ", "BASS  ", "TREBLE"
+};
+const char* SM_SHORT[SM_COUNT] = { "OF", "MU", "MV", "MN" };
+const char* IS_LBL[IS_COUNT]   = { "DVD","USB","AU1","AU2","AU3","FT3" };
 
-// ── Hardware ─────────────────────────────────────────────────────────────────
-IRrecv        irRecv(IR_RECV_PIN);
+// -- Big-digit custom character data ------------------------------------------
+//  8 segments in LCD CGRAM slots 0-7. Each digit is 3 cols x 2 rows.
+byte BD_CHARS[8][8] = {
+  { B00111,B01111,B11111,B11111,B11111,B11111,B11111,B11111 },
+  { B11111,B11111,B11111,B00000,B00000,B00000,B00000,B00000 },
+  { B11100,B11110,B11111,B11111,B11111,B11111,B11111,B11111 },
+  { B11111,B11111,B11111,B11111,B11111,B11111,B01111,B00111 },
+  { B00000,B00000,B00000,B00000,B00000,B11111,B11111,B11111 },
+  { B11111,B11111,B11111,B11111,B11111,B11111,B11110,B11100 },
+  { B11111,B11111,B11111,B00000,B00000,B00000,B11111,B11111 },
+  { B11111,B11111,B11111,B11111,B11111,B11111,B11111,B11111 }
+};
+
+const char BD_TOP[10][3] = {
+  {0,1,2},{1,2,32},{6,6,2},{6,6,2},{3,4,7},
+  {7,6,6},{0,6,6},{1,1,2},{0,6,2},{0,6,2}
+};
+const char BD_BOT[10][3] = {
+  {3,4,5},{4,7,4},{7,4,4},{4,4,5},{32,32,7},
+  {4,4,5},{3,4,5},{32,32,7},{3,4,5},{4,4,5}
+};
+
+#define BD_COL 10   // big digits start at column 10 (cols 10-15)
+
+// -- Hardware objects ---------------------------------------------------------
+LiquidCrystal lcd(PIN_LCD_RS, PIN_LCD_EN,
+                  PIN_LCD_D4, PIN_LCD_D5, PIN_LCD_D6, PIN_LCD_D7);
+IRrecv        irRecv(PIN_IR);
 decode_results irData;
-LiquidCrystal lcd(LCD_RS, LCD_EN, LCD_D4, LCD_D5, LCD_D6, LCD_D7);
 
-volatile int8_t encoderDelta = 0;
-uint8_t encA_last = 0;
+// -- Application state --------------------------------------------------------
+uint8_t   volMaster = 40;
+uint8_t   volFront  = 40;
+uint8_t   volCenter = 40;
+uint8_t   volSub    = 40;
+uint8_t   volRear   = 40;
+uint8_t   valGain   = 40;
+uint8_t   valBass   = 7;      // 0-14 (7 = flat)
+uint8_t   valTreble = 7;
 
-// ── FR6311 SPI ───────────────────────────────────────────────────────────────
+bool      isMuted   = false;
+bool      isStandby = false;
+
+CtrlMode  ctrlMode  = CM_MASTER;
+SurrMode  surrMode  = SM_OFF;
+InputSrc  inputSrc  = IS_DVD;
+
+unsigned long lastKeyMs  = 0;
+uint32_t      lastIRCode = 0;
+#define AUTO_RETURN_MS  5000UL
+
+volatile int8_t  encDelta = 0;
+
+// -- FR6311 I2C helpers -------------------------------------------------------
 void fr6311Write(uint8_t reg, uint8_t val) {
-  digitalWrite(FR6311_CS, LOW);
-  shiftOut(FR6311_DATA, FR6311_CLK, MSBFIRST, reg);
-  shiftOut(FR6311_DATA, FR6311_CLK, MSBFIRST, val);
-  digitalWrite(FR6311_CS, HIGH);
+  Wire.beginTransmission(FR6311_ADDR);
+  Wire.write(reg);
+  Wire.write(val);
+  Wire.endTransmission();
 }
 
-void applyAllLevels() {
-  uint8_t applyVol = muted ? 0 : masterVol;
-  fr6311Write(0x00, applyVol);                       // master
-  for (uint8_t i = 0; i < CH_COUNT; i++) {
-    int16_t lv = constrain((int16_t)masterVol + chTrim[i], 0, 79);
-    fr6311Write(0x01 + i, muted ? 0 : (uint8_t)lv);
-  }
-  fr6311Write(0x07, bass);
-  fr6311Write(0x08, treble);
-  fr6311Write(0x09, gain);
-}
-
-// ── FT003 Input Selector ─────────────────────────────────────────────────────
-void applyInput() {
-  uint8_t ftSrc = 0;
-  switch (inputSrc) {
-    case SRC_FT_AUX:  ftSrc = 0; break;
-    case SRC_FT_OPT:  ftSrc = 1; break;
-    case SRC_FT_COAX: ftSrc = 2; break;
-    case SRC_FT_HDMI: ftSrc = 3; break;
-    default:          ftSrc = 0; break;
-  }
-  digitalWrite(FT003_S0, ftSrc & 0x01);
-  digitalWrite(FT003_S1, (ftSrc >> 1) & 0x01);
-  digitalWrite(FT003_S2, (ftSrc >> 2) & 0x01);
-}
-
-// ── LCD Update ───────────────────────────────────────────────────────────────
-void updateLCD() {
-  lcd.clear();
-  if (standby) {
-    lcd.setCursor(4, 0); lcd.print(F("STANDBY"));
+void fr6311ApplyAll() {
+  if (isStandby) {
+    fr6311Write(FR_MASTER, 0);
+    fr6311Write(FR_FL, 0);     fr6311Write(FR_FR_REG, 0);
+    fr6311Write(FR_CENTER, 0); fr6311Write(FR_SUB, 0);
+    fr6311Write(FR_RL, 0);     fr6311Write(FR_RR, 0);
     return;
   }
+  uint8_t m = isMuted ? 0 : volMaster;
+  uint8_t f = isMuted ? 0 : volFront;
+  uint8_t c = isMuted ? 0 : volCenter;
+  uint8_t s = isMuted ? 0 : volSub;
+  uint8_t r = isMuted ? 0 : volRear;
+  fr6311Write(FR_MASTER,   m);
+  fr6311Write(FR_FL,       f);  fr6311Write(FR_FR_REG,   f);
+  fr6311Write(FR_CENTER,   c);  fr6311Write(FR_SUB,      s);
+  fr6311Write(FR_RL,       r);  fr6311Write(FR_RR,       r);
+  fr6311Write(FR_BASS,     valBass);
+  fr6311Write(FR_TREBLE,   valTreble);
+  fr6311Write(FR_GAIN,     valGain);
+  fr6311Write(FR_SURROUND, (uint8_t)surrMode);
+  fr6311Write(FR_INPUT,    (uint8_t)inputSrc);
+}
+
+// -- Big-digit LCD functions --------------------------------------------------
+void createBigDigits() {
+  for (uint8_t i = 0; i < 8; i++)
+    lcd.createChar(i, BD_CHARS[i]);
+}
+
+void drawBigDigit(uint8_t d, uint8_t col) {
+  if (d > 9) d = 0;
+  lcd.setCursor(col, 0);
+  for (uint8_t i = 0; i < 3; i++) lcd.write((uint8_t)BD_TOP[d][i]);
+  lcd.setCursor(col, 1);
+  for (uint8_t i = 0; i < 3; i++) lcd.write((uint8_t)BD_BOT[d][i]);
+}
+
+void drawBigNumber(uint8_t n) {
+  if (n > 99) n = 99;
+  drawBigDigit(n / 10, BD_COL);
+  drawBigDigit(n % 10, BD_COL + 3);
+}
+
+// -- Display ------------------------------------------------------------------
+void lcdPrint(uint8_t col, uint8_t row, const char* s, uint8_t w) {
+  lcd.setCursor(col, row);
+  uint8_t n = 0;
+  while (*s && n < w) { lcd.write(*s++); n++; }
+  while (n++ < w)     { lcd.write(' '); }
+}
+
+void updateDisplay() {
+  lcd.clear();
+
+  if (isStandby) {
+    lcd.setCursor(3, 0); lcd.print(F("** STANDBY **"));
+    lcd.setCursor(2, 1); lcd.print(F("- POWER  OFF -"));
+    return;
+  }
+
+  if (isMuted) {
+    lcd.setCursor(1, 0); lcd.print(F("  ** MUTED **  "));
+    lcd.setCursor(0, 1); lcd.print(F(" AUDIO  MUTED  "));
+    return;
+  }
+
+  // Row 0: <IN:XXX>SS  (10 chars) + big-digit top (6 chars)
+  // '<'=1 + "IN:"=3 + SRC=3 + '>'=1 + SURR=2 = 10 chars
   lcd.setCursor(0, 0);
-  lcd.print(SRC_NAMES[inputSrc]);
-  lcd.setCursor(9, 0);
-  lcd.print(MODE_NAMES[surroundMode]);
+  lcd.write('<');
+  lcd.print(F("IN:"));
+  lcd.print(IS_LBL[inputSrc]);
+  lcd.write('>');
+  lcd.print(SM_SHORT[surrMode]);
 
-  lcd.setCursor(0, 1);
-  if (muted) {
-    lcd.print(F("   ** MUTED **  "));
-  } else {
-    lcd.print(CH_NAMES[activeChannel]);
-    lcd.print(F(" TRIM:"));
-    int8_t t = chTrim[activeChannel];
-    if (t >= 0) lcd.print('+');
-    lcd.print(t);
-    lcd.setCursor(11, 1);
-    lcd.print(F("V:"));
-    if (masterVol < 10) lcd.print('0');
-    lcd.print(masterVol);
+  // Row 1: mode label (10 chars) + big-digit bottom (6 chars)
+  lcdPrint(0, 1, CM_LBL[ctrlMode], 10);
+
+  // Big digits cols 10-15, rows 0-1
+  uint8_t dv;
+  switch (ctrlMode) {
+    case CM_MASTER: dv = volMaster; break;
+    case CM_FRONT:  dv = volFront;  break;
+    case CM_CENTER: dv = volCenter; break;
+    case CM_SUB:    dv = volSub;    break;
+    case CM_REAR:   dv = volRear;   break;
+    case CM_GAIN:   dv = valGain;   break;
+    case CM_BASS:   dv = valBass;   break;
+    case CM_TREBLE: dv = valTreble; break;
+    default:        dv = volMaster; break;
+  }
+  drawBigNumber(dv);
+}
+
+// -- EEPROM -------------------------------------------------------------------
+void eepromSave() {
+  EEPROM.update(EE_MASTER, volMaster);
+  EEPROM.update(EE_FRONT,  volFront);
+  EEPROM.update(EE_CENTER, volCenter);
+  EEPROM.update(EE_SUB,    volSub);
+  EEPROM.update(EE_REAR,   volRear);
+  EEPROM.update(EE_BASS,   valBass);
+  EEPROM.update(EE_TREBLE, valTreble);
+  EEPROM.update(EE_GAIN,   valGain);
+  EEPROM.update(EE_INPUT,  (uint8_t)inputSrc);
+  EEPROM.update(EE_SURR,   (uint8_t)surrMode);
+}
+
+void eepromLoad() {
+  uint8_t v;
+  v = EEPROM.read(EE_MASTER); if (v <= 79)      volMaster = v;
+  v = EEPROM.read(EE_FRONT);  if (v <= 79)      volFront  = v;
+  v = EEPROM.read(EE_CENTER); if (v <= 79)      volCenter = v;
+  v = EEPROM.read(EE_SUB);    if (v <= 79)      volSub    = v;
+  v = EEPROM.read(EE_REAR);   if (v <= 79)      volRear   = v;
+  v = EEPROM.read(EE_BASS);   if (v <= 14)      valBass   = v;
+  v = EEPROM.read(EE_TREBLE); if (v <= 14)      valTreble = v;
+  v = EEPROM.read(EE_GAIN);   if (v <= 79)      valGain   = v;
+  v = EEPROM.read(EE_INPUT);  if (v < IS_COUNT) inputSrc  = (InputSrc)v;
+  v = EEPROM.read(EE_SURR);   if (v < SM_COUNT) surrMode  = (SurrMode)v;
+}
+
+// -- Volume helpers -----------------------------------------------------------
+uint8_t getMaxVol(CtrlMode m) {
+  return (m == CM_BASS || m == CM_TREBLE) ? 14 : 79;
+}
+
+void adjustVol(int8_t delta) {
+  uint8_t mx = getMaxVol(ctrlMode);
+  switch (ctrlMode) {
+    case CM_MASTER: volMaster=(uint8_t)constrain((int)volMaster+delta,0,mx); break;
+    case CM_FRONT:  volFront =(uint8_t)constrain((int)volFront +delta,0,mx); break;
+    case CM_CENTER: volCenter=(uint8_t)constrain((int)volCenter+delta,0,mx); break;
+    case CM_SUB:    volSub   =(uint8_t)constrain((int)volSub   +delta,0,mx); break;
+    case CM_REAR:   volRear  =(uint8_t)constrain((int)volRear  +delta,0,mx); break;
+    case CM_GAIN:   valGain  =(uint8_t)constrain((int)valGain  +delta,0,mx); break;
+    case CM_BASS:   valBass  =(uint8_t)constrain((int)valBass  +delta,0,mx); break;
+    case CM_TREBLE: valTreble=(uint8_t)constrain((int)valTreble+delta,0,mx); break;
+    default: break;
   }
 }
 
-// ── EEPROM Persistence ───────────────────────────────────────────────────────
-void saveState() {
-  EEPROM.write(EEPROM_MASTER, masterVol);
-  for (uint8_t i = 0; i < CH_COUNT; i++)
-    EEPROM.write(EEPROM_FL + i, (uint8_t)(chTrim[i] + 15));
-  EEPROM.write(EEPROM_BASS,   bass);
-  EEPROM.write(EEPROM_TREBLE, treble);
-  EEPROM.write(EEPROM_GAIN,   gain);
-  EEPROM.write(EEPROM_INPUT,  (uint8_t)inputSrc);
-  EEPROM.write(EEPROM_SURR,   (uint8_t)surroundMode);
-}
-
-void loadState() {
-  masterVol    = constrain(EEPROM.read(EEPROM_MASTER), 0, 79);
-  for (uint8_t i = 0; i < CH_COUNT; i++)
-    chTrim[i]  = (int8_t)EEPROM.read(EEPROM_FL + i) - 15;
-  bass         = constrain(EEPROM.read(EEPROM_BASS),   0, 14);
-  treble       = constrain(EEPROM.read(EEPROM_TREBLE), 0, 14);
-  gain         = constrain(EEPROM.read(EEPROM_GAIN),   0, 79);
-  inputSrc     = (InputSource)constrain(EEPROM.read(EEPROM_INPUT), 0, SRC_COUNT-1);
-  surroundMode = (SurroundMode)constrain(EEPROM.read(EEPROM_SURR), 0, 3);
-}
-
-// ── Encoder ISR ──────────────────────────────────────────────────────────────
+// -- Encoder ISR --------------------------------------------------------------
 void encoderISR() {
-  uint8_t a = digitalRead(ENC_A);
-  uint8_t b = digitalRead(ENC_B);
-  if (a != encA_last) {
-    encoderDelta += (a == b) ? 1 : -1;
-    encA_last = a;
+  if (digitalRead(PIN_ENC_CLK) == LOW) {
+    encDelta += (digitalRead(PIN_ENC_DT) == HIGH) ? +1 : -1;
   }
 }
 
-// ── IR Handler ───────────────────────────────────────────────────────────────
+// -- IR handler ---------------------------------------------------------------
 void handleIR(uint32_t code) {
+  if (code == IR_NEC_RPT) code = lastIRCode;
+  else                    lastIRCode = code;
+  if (code == 0) return;
+
+  lastKeyMs = millis();
+
   switch (code) {
-    case IR_VOL_UP:
-      if (!standby) masterVol = constrain(masterVol + 1, 0, 79);
+    case IR_STANDBY:     isStandby = !isStandby;                    break;
+    case IR_MUTE:        if (!isStandby) isMuted = !isMuted;        break;
+
+    case IR_DVD:         inputSrc = IS_DVD;   break;
+    case IR_USB_SRC:     inputSrc = IS_USB;   break;
+    case IR_AUX1:        inputSrc = IS_AUX1;  break;
+    case IR_AUX2:        inputSrc = IS_AUX2;  break;
+    case IR_AUX3:        inputSrc = IS_AUX3;  break;
+    case IR_FT003_SEL:   inputSrc = IS_FT003; break;
+
+    case IR_MSTR_PLUS:   ctrlMode = CM_MASTER; adjustVol(+1); break;
+    case IR_MSTR_MINUS:  ctrlMode = CM_MASTER; adjustVol(-1); break;
+    case IR_FRONT_PLUS:  ctrlMode = CM_FRONT;  adjustVol(+1); break;
+    case IR_FRONT_MINUS: ctrlMode = CM_FRONT;  adjustVol(-1); break;
+    case IR_CTR_PLUS:    ctrlMode = CM_CENTER; adjustVol(+1); break;
+    case IR_CTR_MINUS:   ctrlMode = CM_CENTER; adjustVol(-1); break;
+    case IR_SUB_PLUS:    ctrlMode = CM_SUB;    adjustVol(+1); break;
+    case IR_SUB_MINUS:   ctrlMode = CM_SUB;    adjustVol(-1); break;
+    case IR_REAR_PLUS:   ctrlMode = CM_REAR;   adjustVol(+1); break;
+    case IR_REAR_MINUS:  ctrlMode = CM_REAR;   adjustVol(-1); break;
+
+    case IR_GAIN_KEY:    ctrlMode = CM_GAIN;               break;
+    case IR_GAIN_PLUS:   ctrlMode = CM_GAIN;   adjustVol(+1); break;
+    case IR_GAIN_MINUS:  ctrlMode = CM_GAIN;   adjustVol(-1); break;
+
+    case IR_BASS_PLUS:   ctrlMode = CM_BASS;   adjustVol(+1); break;
+    case IR_BASS_MINUS:  ctrlMode = CM_BASS;   adjustVol(-1); break;
+    case IR_TREB_PLUS:   ctrlMode = CM_TREBLE; adjustVol(+1); break;
+    case IR_TREB_MINUS:  ctrlMode = CM_TREBLE; adjustVol(-1); break;
+
+    case IR_SURROUND_KEY:
+      surrMode = (SurrMode)((surrMode + 1) % SM_COUNT);
       break;
-    case IR_VOL_DOWN:
-      if (!standby) masterVol = constrain(masterVol - 1, 0, 79);
+
+    case IR_RESET_KEY:
+      volMaster = volFront = volCenter = volSub = volRear = 40;
+      valBass = valTreble = 7;
+      valGain = 40;
+      isMuted = false;
+      ctrlMode = CM_MASTER;
+      surrMode = SM_OFF;
       break;
-    case IR_MUTE:
-      muted = !muted;
-      digitalWrite(MUTE_LED, muted ? HIGH : LOW);
+
+    case IR_ESC:
+      ctrlMode = CM_MASTER;
       break;
-    case IR_STANDBY:
-      standby = !standby;
-      digitalWrite(STANDBY_LED, standby ? HIGH : LOW);
-      if (standby) fr6311Write(0x00, 0);
+
+    case IR_SEL_21_51:
+    case IR_TEST_TONE:
+    case IR_USB_PREV: case IR_USB_NEXT: case IR_USB_PLAY:
+    case IR_USB_EQ:   case IR_USB_MODE:
       break;
-    case IR_DVD:      inputSrc = SRC_DVD;     applyInput(); break;
-    case IR_USB:      inputSrc = SRC_USB;     applyInput(); break;
-    case IR_AUX1:     inputSrc = SRC_AUX1;    applyInput(); break;
-    case IR_AUX2:     inputSrc = SRC_AUX2;    applyInput(); break;
-    case IR_AUX3:     inputSrc = SRC_AUX3;    applyInput(); break;
-    case IR_FT_AUX:   inputSrc = SRC_FT_AUX;  applyInput(); break;
-    case IR_FT_OPT:   inputSrc = SRC_FT_OPT;  applyInput(); break;
-    case IR_FT_COAX:  inputSrc = SRC_FT_COAX; applyInput(); break;
-    case IR_FT_HDMI:  inputSrc = SRC_FT_HDMI; applyInput(); break;
-    case IR_MODE_STEREO: surroundMode = MODE_STEREO; break;
-    case IR_MODE_MOVIE:  surroundMode = MODE_MOVIE;  break;
-    case IR_MODE_MUSIC:  surroundMode = MODE_MUSIC;  break;
-    case IR_MODE_GAME:   surroundMode = MODE_GAME;   break;
-    case IR_CH_NEXT:
-      activeChannel = (Channel)((activeChannel + 1) % CH_COUNT);
-      break;
-    case IR_TRIM_UP:
-      chTrim[activeChannel] = constrain(chTrim[activeChannel] + 1, -15, 15);
-      break;
-    case IR_TRIM_DOWN:
-      chTrim[activeChannel] = constrain(chTrim[activeChannel] - 1, -15, 15);
-      break;
+
+    default: break;
   }
-  applyAllLevels();
-  updateLCD();
-  saveState();
+
+  fr6311ApplyAll();
+  eepromSave();
+  updateDisplay();
 }
 
-// ── Setup ────────────────────────────────────────────────────────────────────
+// -- setup() ------------------------------------------------------------------
 void setup() {
-  pinMode(ENC_A, INPUT_PULLUP);
-  pinMode(ENC_B, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(ENC_A), encoderISR, CHANGE);
-  encA_last = digitalRead(ENC_A);
+  Serial.begin(115200);
 
-  pinMode(MUTE_LED,    OUTPUT);
-  pinMode(STANDBY_LED, OUTPUT);
+  pinMode(PIN_ENC_CLK, INPUT_PULLUP);
+  pinMode(PIN_ENC_DT,  INPUT_PULLUP);
+  pinMode(PIN_ENC_SW,  INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(PIN_ENC_CLK), encoderISR, CHANGE);
 
-  pinMode(FR6311_CLK,  OUTPUT);
-  pinMode(FR6311_DATA, OUTPUT);
-  pinMode(FR6311_CS,   OUTPUT);
-  digitalWrite(FR6311_CS, HIGH);
+  pinMode(PIN_USB_5V, INPUT);
+  pinMode(PIN_USB_IR, INPUT);
 
-  pinMode(FT003_S0, OUTPUT);
-  pinMode(FT003_S1, OUTPUT);
-  pinMode(FT003_S2, OUTPUT);
+  Wire.begin();
 
   lcd.begin(16, 2);
-  lcd.print(F("Ultra Digital 5.1"));
-  delay(1200);
+  createBigDigits();
 
-  loadState();
-  applyAllLevels();
-  applyInput();
-  updateLCD();
+  lcd.clear();
+  lcd.setCursor(0, 0); lcd.print(F("ULTRA  DIGITAL"));
+  lcd.setCursor(2, 1); lcd.print(F("5.1  READY"));
+  delay(1500);
+
+  eepromLoad();
+  fr6311ApplyAll();
 
   irRecv.enableIRIn();
+  lastKeyMs = millis();
+  updateDisplay();
 }
 
-// ── Loop ─────────────────────────────────────────────────────────────────────
+// -- loop() -------------------------------------------------------------------
 void loop() {
+
   if (irRecv.decode(&irData)) {
     if (irData.decode_type == NEC) {
+      Serial.print(F("IR 0x"));
+      Serial.println(irData.value, HEX);
       handleIR(irData.value);
     }
     irRecv.resume();
   }
 
-  if (encoderDelta != 0) {
+  if (encDelta != 0) {
     noInterrupts();
-    int8_t delta = encoderDelta;
-    encoderDelta = 0;
+    int8_t d = encDelta;
+    encDelta  = 0;
     interrupts();
-
-    if (!standby) {
-      masterVol = constrain((int16_t)masterVol + delta, 0, 79);
-      applyAllLevels();
-      updateLCD();
-      saveState();
+    if (!isStandby) {
+      lastKeyMs = millis();
+      adjustVol(d);
+      fr6311ApplyAll();
+      eepromSave();
+      updateDisplay();
     }
+  }
+
+  static bool swPrev = HIGH;
+  bool swNow = digitalRead(PIN_ENC_SW);
+  if (swPrev == HIGH && swNow == LOW) {
+    delay(40);
+    if (digitalRead(PIN_ENC_SW) == LOW) {
+      lastKeyMs = millis();
+      ctrlMode  = (CtrlMode)((ctrlMode + 1) % CM_COUNT);
+      updateDisplay();
+    }
+  }
+  swPrev = swNow;
+
+  if (ctrlMode != CM_MASTER &&
+      (millis() - lastKeyMs >= AUTO_RETURN_MS)) {
+    ctrlMode = CM_MASTER;
+    updateDisplay();
   }
 }`;
 
