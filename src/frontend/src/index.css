@@ -1,0 +1,346 @@
+@import url("https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@400;500;600;700&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --radius: 0.5rem;
+    /* Dark metallic AV theme */
+    --background: 0.13 0.008 240;
+    --foreground: 0.85 0.01 240;
+    --card: 0.19 0.01 240;
+    --card-foreground: 0.85 0.01 240;
+    --popover: 0.22 0.01 240;
+    --popover-foreground: 0.85 0.01 240;
+    --primary: 0.75 0.14 65;
+    --primary-foreground: 0.12 0.008 240;
+    --secondary: 0.25 0.01 240;
+    --secondary-foreground: 0.85 0.01 240;
+    --muted: 0.2 0.01 240;
+    --muted-foreground: 0.55 0.01 240;
+    --accent: 0.8 0.12 195;
+    --accent-foreground: 0.12 0.008 240;
+    --destructive: 0.6 0.2 25;
+    --destructive-foreground: 0.985 0 0;
+    --border: 0.28 0.01 240;
+    --input: 0.22 0.01 240;
+    --ring: 0.75 0.14 65;
+    /* Amber */
+    --amber: 0.75 0.15 65;
+    --amber-dim: 0.6 0.12 65;
+    /* Cyan */
+    --cyan: 0.8 0.12 195;
+    --cyan-dim: 0.6 0.1 195;
+    /* LCD */
+    --lcd-bg: 0.08 0.02 160;
+    --lcd-amber: 0.73 0.16 65;
+    --lcd-cyan: 0.82 0.13 195;
+    /* Panel */
+    --panel: 0.21 0.012 240;
+    --panel-raised: 0.25 0.012 240;
+    --chart-1: 0.75 0.15 65;
+    --chart-2: 0.8 0.12 195;
+    --chart-3: 0.65 0.15 140;
+    --chart-4: 0.7 0.18 25;
+    --chart-5: 0.75 0.14 290;
+    --sidebar: 0.15 0.01 240;
+    --sidebar-foreground: 0.85 0.01 240;
+    --sidebar-primary: 0.75 0.14 65;
+    --sidebar-primary-foreground: 0.12 0.008 240;
+    --sidebar-accent: 0.22 0.01 240;
+    --sidebar-accent-foreground: 0.85 0.01 240;
+    --sidebar-border: 0.28 0.01 240;
+    --sidebar-ring: 0.75 0.14 65;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: "Rajdhani", "General Sans", sans-serif;
+    /* Brushed metal background: horizontal grain over steel gradient */
+    background-color: #6f7479;
+    background-image: repeating-linear-gradient(
+        180deg,
+        rgba(255, 255, 255, 0.025) 0px,
+        rgba(255, 255, 255, 0.025) 1px,
+        transparent 1px,
+        transparent 3px
+      ),
+      repeating-linear-gradient(
+        180deg,
+        rgba(0, 0, 0, 0.04) 0px,
+        rgba(0, 0, 0, 0.04) 2px,
+        transparent 2px,
+        transparent 6px
+      ),
+      linear-gradient(
+        180deg,
+        #7c8288 0%,
+        #717880 30%,
+        #666c73 70%,
+        #6a7077 100%
+      );
+    min-height: 100vh;
+  }
+}
+
+/* LCD dot matrix font */
+.font-lcd {
+  font-family: "Share Tech Mono", "JetBrains Mono", monospace;
+  letter-spacing: 0.1em;
+}
+
+.font-brand {
+  font-family: "Rajdhani", sans-serif;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+}
+
+/* ── Console outer shell — thick skeuomorphic bevel ── */
+.console-shell {
+  background: linear-gradient(180deg, #393f47 0%, #2b3038 50%, #252b32 100%);
+  border-radius: 16px;
+  border: 1px solid #4a5260;
+  /* Outer drop shadow */
+  box-shadow:
+    0 20px 60px rgba(0, 0, 0, 0.75),
+    0 8px 24px rgba(0, 0, 0, 0.6),
+    /* Top highlight edge */
+    inset 0 2px 0 rgba(255, 255, 255, 0.12),
+    /* Bottom shadow edge */
+    inset 0 -2px 0 rgba(0, 0, 0, 0.6),
+    /* Left highlight */
+    inset 2px 0 0 rgba(255, 255, 255, 0.07),
+    /* Right shadow */
+    inset -2px 0 0 rgba(0, 0, 0, 0.4);
+}
+
+/* ── Inner panel (recessed sub-sections) ── */
+.panel-bevel {
+  background: linear-gradient(
+    180deg,
+    oklch(0.18 0.01 240) 0%,
+    oklch(0.21 0.012 240) 100%
+  );
+  border: 1px solid oklch(0.32 0.01 240);
+  box-shadow:
+    inset 0 2px 6px rgba(0, 0, 0, 0.7),
+    inset 0 1px 2px rgba(0, 0, 0, 0.5),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.06),
+    0 1px 0 rgba(255, 255, 255, 0.08),
+    0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+/* ── LCD inset recess ── */
+.panel-inset {
+  background: oklch(var(--lcd-bg));
+  border: 1px solid oklch(0.14 0.02 160);
+  box-shadow:
+    inset 0 3px 10px rgba(0, 0, 0, 0.9),
+    inset 0 1px 3px rgba(0, 0, 0, 0.8),
+    inset 2px 0 6px rgba(0, 0, 0, 0.4),
+    inset -2px 0 6px rgba(0, 0, 0, 0.4),
+    /* Subtle LCD bloom glow */
+    0 0 20px rgba(53, 199, 214, 0.05);
+}
+
+/* ── Amber glow button ── */
+.btn-amber {
+  background: linear-gradient(145deg, oklch(0.72 0.14 68), oklch(0.55 0.13 62));
+  border: 1px solid oklch(0.82 0.15 65);
+  box-shadow: 0 0 10px oklch(0.75 0.15 65 / 0.5), 0 0 20px
+    oklch(0.75 0.15 65 / 0.2), inset 0 1px 0 oklch(0.88 0.12 68 / 0.4), inset 0
+    -1px 0 rgba(0, 0, 0, 0.3);
+  color: oklch(0.1 0.01 240);
+  font-family: "Rajdhani", sans-serif;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+}
+
+.btn-amber:hover {
+  box-shadow: 0 0 16px oklch(0.75 0.15 65 / 0.75), 0 0 30px
+    oklch(0.75 0.15 65 / 0.35), inset 0 1px 0 oklch(0.9 0.12 65 / 0.5);
+}
+
+.btn-amber.active,
+.btn-amber[data-active="true"] {
+  box-shadow: 0 0 24px oklch(0.75 0.15 65 / 0.95), 0 0 48px
+    oklch(0.75 0.15 65 / 0.4), inset 0 1px 0 oklch(0.9 0.12 65 / 0.5);
+}
+
+/* ── Tactile input selector button ── */
+.btn-input {
+  background: linear-gradient(180deg, #3a4048 0%, #2e3440 50%, #252b32 100%);
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.5);
+  border-right: 1px solid rgba(0, 0, 0, 0.3);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.5), inset 0 1px 0
+    rgba(255, 255, 255, 0.1);
+  transition: all 0.1s ease;
+}
+
+.btn-input:active {
+  background: linear-gradient(180deg, #252b32 0%, #2e3440 100%);
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.7);
+  transform: translateY(1px);
+}
+
+.btn-input-active {
+  background: linear-gradient(
+    180deg,
+    oklch(0.2 0.04 65) 0%,
+    oklch(0.15 0.04 65) 100%
+  );
+  border-top: 1px solid oklch(0.55 0.12 65);
+  border-left: 1px solid oklch(0.45 0.1 65);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.5);
+  border-right: 1px solid rgba(0, 0, 0, 0.3);
+  box-shadow: 0 0 12px oklch(0.75 0.15 65 / 0.4), 0 0 24px
+    oklch(0.75 0.15 65 / 0.15), inset 0 1px 0 oklch(0.75 0.12 65 / 0.3);
+}
+
+/* ── LED indicator dot ── */
+.led-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: oklch(0.25 0.04 65);
+  border: 1px solid oklch(0.18 0.02 65);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.5);
+  flex-shrink: 0;
+}
+
+.led-dot.active {
+  background: oklch(0.8 0.15 65);
+  border: 1px solid oklch(0.9 0.12 65);
+  box-shadow: 0 0 6px oklch(0.75 0.15 65 / 0.9), 0 0 14px
+    oklch(0.75 0.15 65 / 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+}
+
+/* ── Cyan glow ── */
+.cyan-glow {
+  box-shadow: 0 0 8px oklch(0.8 0.12 195 / 0.6), 0 0 20px
+    oklch(0.8 0.12 195 / 0.2);
+}
+
+.amber-glow {
+  box-shadow: 0 0 8px oklch(0.75 0.15 65 / 0.6), 0 0 20px
+    oklch(0.75 0.15 65 / 0.2);
+}
+
+/* ── Power ring pulse animation ── */
+@keyframes amber-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 8px oklch(0.75 0.15 65 / 0.6), 0 0 16px
+      oklch(0.75 0.15 65 / 0.3);
+  }
+  50% {
+    box-shadow: 0 0 14px oklch(0.75 0.15 65 / 0.9), 0 0 28px
+      oklch(0.75 0.15 65 / 0.5);
+  }
+}
+
+.amber-pulse {
+  animation: amber-pulse 2.5s ease-in-out infinite;
+}
+
+/* ── Custom range slider ── */
+input[type="range"].amber-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+  width: 100%;
+}
+
+input[type="range"].amber-slider::-webkit-slider-track {
+  background: oklch(0.15 0.01 240);
+  border-radius: 4px;
+  height: 6px;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.8);
+}
+
+input[type="range"].amber-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 38% 35%,
+    oklch(0.82 0.14 68),
+    oklch(0.58 0.13 62)
+  );
+  border: 2px solid oklch(0.85 0.12 65);
+  box-shadow: 0 0 10px oklch(0.75 0.15 65 / 0.7), 0 2px 4px rgba(0, 0, 0, 0.5);
+  margin-top: -8px;
+}
+
+/* ── Vertical fader ── */
+.fader-track {
+  width: 10px;
+  background: linear-gradient(90deg, #0e1014, #161b21, #0e1014);
+  border-radius: 5px;
+  box-shadow:
+    inset 0 2px 10px rgba(0, 0, 0, 0.9),
+    inset 1px 0 3px rgba(0, 0, 0, 0.6),
+    inset -1px 0 3px rgba(0, 0, 0, 0.6),
+    /* Faint tick-mark-like highlights */
+    inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+  position: relative;
+}
+
+.fader-fill {
+  background: linear-gradient(
+    to top,
+    oklch(0.7 0.15 195),
+    oklch(0.85 0.12 195 / 0.7)
+  );
+  border-radius: 5px;
+  box-shadow: 0 0 10px oklch(0.8 0.12 195 / 0.7), 0 0 20px
+    oklch(0.8 0.12 195 / 0.3);
+}
+
+/* ── Fader handle (ridged chunky style) ── */
+.fader-handle {
+  width: 28px;
+  height: 14px;
+  border-radius: 3px;
+  position: relative;
+  cursor: ns-resize;
+  background: linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.15) 0%,
+      rgba(255, 255, 255, 0.04) 48%,
+      rgba(0, 0, 0, 0.2) 50%,
+      rgba(0, 0, 0, 0.05) 100%
+    ), linear-gradient(90deg, #3a4048, #50585f, #5a6268, #50585f, #3a4048);
+  border-top: 1px solid rgba(255, 255, 255, 0.22);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.6);
+  border-left: 1px solid rgba(255, 255, 255, 0.12);
+  border-right: 1px solid rgba(0, 0, 0, 0.4);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.7), inset 0 1px 0
+    rgba(255, 255, 255, 0.15);
+}
+
+/* Ridge lines on fader handle */
+.fader-handle::before {
+  content: "";
+  position: absolute;
+  inset: 3px 4px;
+  background: repeating-linear-gradient(
+    180deg,
+    transparent 0px,
+    transparent 2px,
+    rgba(255, 255, 255, 0.08) 2px,
+    rgba(255, 255, 255, 0.08) 3px
+  );
+  border-radius: 1px;
+}
