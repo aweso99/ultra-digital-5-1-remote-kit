@@ -670,22 +670,22 @@ const ARDUINO_CODE = `/*
 #define PIN_USB_IR  A3
 
 // -- FR6311 I2C ---------------------------------------------------------------
-// ADDR pin: GND=0x40  Float=0x41  VCC=0x42
-#define FR6311_ADDR   0x40
+// I2C Write Address: 0x88 (7-bit: 0x44)
+#define FR6311_ADDR   0x44
 
-// Register map - verify against your board datasheet before use
-#define FR_MASTER     0x00
-#define FR_FL         0x01
-#define FR_FR_REG     0x02
-#define FR_CENTER     0x03
-#define FR_SUB        0x04
-#define FR_RL         0x05
-#define FR_RR         0x06
-#define FR_BASS       0x07
-#define FR_TREBLE     0x08
-#define FR_GAIN       0x09
-#define FR_SURROUND   0x0A
-#define FR_INPUT      0x0B
+// FR6311 Register Map (verified)
+#define FR_INPUT_SEL  0x00   // Input Selector & Input Gain
+#define FR_FL         0x01   // Volume - Front Left
+#define FR_FR_REG     0x02   // Volume - Front Right
+#define FR_CENTER     0x03   // Volume - Center
+#define FR_SUB        0x04   // Volume - Subwoofer
+#define FR_RL         0x05   // Volume - Surround Left
+#define FR_RR         0x06   // Volume - Surround Right
+#define FR_BASS       0x07   // Tone Control - Bass
+#define FR_TREBLE     0x08   // Tone Control - Treble
+#define FR_MULTICHAN  0x09   // Multi-Channel Input Configuration
+#define FR_REC_GAIN   0x0A   // REC Output Gain
+#define FR_ADC_CFG    0x0B   // ADC Configuration & Attenuation
 
 // -- IR codes (32-bit NEC) ----------------------------------------------------
 #define IR_STANDBY      0x807F827DUL
@@ -824,28 +824,102 @@ void fr6311Write(uint8_t reg, uint8_t val) {
   Wire.endTransmission();
 }
 
+// -- Surround Mode Preset Application ----------------------------------------
+// MUSIC MODE: Wide stereo spread, nice ambience
+//   Bass: Medium (10/14)  Treble: Slightly high (10/14)
+//   Rear: boosted +6 for wide field  Center/Sub: neutral
+// MOVIE MODE: Voice enhance, dialogue clarity
+//   Bass: Low (4/14)  Treble: High (12/14)
+//   Center: boosted +6 for dialogue  Rear: reduced -4 for bg control
+// MONO: Centered mono fold-down, flat tone
+// OFF: Restore user-set bass/treble, flat channel trims
+//
+// Note: These write directly to hardware. User bass/treble knobs are
+// overridden while a surround mode is active; they resume on SM_OFF.
+uint8_t surrBassOverride   = 7;  // active when surrMode != SM_OFF
+uint8_t surrTrebleOverride = 7;
+int8_t  surrRearTrim       = 0;  // extra trim on RL/RR vs user setting
+int8_t  surrCenterTrim     = 0;  // extra trim on CT vs user setting
+int8_t  surrSubTrim        = 0;  // extra trim on SW vs user setting
+
+void applySurroundPreset() {
+  switch (surrMode) {
+    case SM_MUSIC:
+      // Wide stereo: medium bass, treble up slightly, surround boosted
+      surrBassOverride   = 10;  // 10/14 = moderate warmth
+      surrTrebleOverride = 10;  // 10/14 = slightly bright for air
+      surrRearTrim       = +6;  // boost rear for wide field
+      surrCenterTrim     =  0;  // centre neutral
+      surrSubTrim        = +2;  // sub slight bump for body
+      break;
+    case SM_MOVIE:
+      // Voice enhance: low bass, high treble, centre boosted, rear subdued
+      surrBassOverride   =  4;  // 4/14 = low bass, keep it tight
+      surrTrebleOverride = 12;  // 12/14 = high treble, sharp dialogue
+      surrRearTrim       = -4;  // reduce rear (background control)
+      surrCenterTrim     = +6;  // boost centre for dialogue clarity
+      surrSubTrim        = -2;  // reduce sub (voice-first mix)
+      break;
+    case SM_MONO:
+      // Mono fold-down: flat tone, equal channels
+      surrBassOverride   = 7;
+      surrTrebleOverride = 7;
+      surrRearTrim       = 0;
+      surrCenterTrim     = 0;
+      surrSubTrim        = 0;
+      break;
+    case SM_OFF:
+    default:
+      // Restore flat / user-controlled values
+      surrBassOverride   = valBass;
+      surrTrebleOverride = valTreble;
+      surrRearTrim       = 0;
+      surrCenterTrim     = 0;
+      surrSubTrim        = 0;
+      break;
+  }
+}
+
 void fr6311ApplyAll() {
-  if (isStandby) {
-    fr6311Write(FR_MASTER, 0);
-    fr6311Write(FR_FL, 0);     fr6311Write(FR_FR_REG, 0);
-    fr6311Write(FR_CENTER, 0); fr6311Write(FR_SUB, 0);
-    fr6311Write(FR_RL, 0);     fr6311Write(FR_RR, 0);
+  // 0x00: Input Selector & Input Gain - encode input source
+  fr6311Write(FR_INPUT_SEL, (uint8_t)inputSrc);
+
+  if (isStandby || isMuted) {
+    // Mute all 6 channel volume registers
+    fr6311Write(FR_FL,     0); fr6311Write(FR_FR_REG, 0);
+    fr6311Write(FR_CENTER, 0); fr6311Write(FR_SUB,    0);
+    fr6311Write(FR_RL,     0); fr6311Write(FR_RR,     0);
     return;
   }
-  uint8_t m = isMuted ? 0 : volMaster;
-  uint8_t f = isMuted ? 0 : volFront;
-  uint8_t c = isMuted ? 0 : volCenter;
-  uint8_t s = isMuted ? 0 : volSub;
-  uint8_t r = isMuted ? 0 : volRear;
-  fr6311Write(FR_MASTER,   m);
-  fr6311Write(FR_FL,       f);  fr6311Write(FR_FR_REG,   f);
-  fr6311Write(FR_CENTER,   c);  fr6311Write(FR_SUB,      s);
-  fr6311Write(FR_RL,       r);  fr6311Write(FR_RR,       r);
-  fr6311Write(FR_BASS,     valBass);
-  fr6311Write(FR_TREBLE,   valTreble);
-  fr6311Write(FR_GAIN,     valGain);
-  fr6311Write(FR_SURROUND, (uint8_t)surrMode);
-  fr6311Write(FR_INPUT,    (uint8_t)inputSrc);
+
+  // Master volume applied as base across all channels (0x01-0x06)
+  // Individual channel levels are master + channel trim + surround trim, clamped 0-79
+  applySurroundPreset();
+  uint8_t fl  = (uint8_t)constrain((int16_t)volMaster + (volFront  - 40), 0, 79);
+  uint8_t fr_ = (uint8_t)constrain((int16_t)volMaster + (volFront  - 40), 0, 79);
+  uint8_t ct  = (uint8_t)constrain((int16_t)volMaster + (volCenter - 40) + surrCenterTrim, 0, 79);
+  uint8_t sw  = (uint8_t)constrain((int16_t)volMaster + (volSub    - 40) + surrSubTrim,    0, 79);
+  uint8_t rl  = (uint8_t)constrain((int16_t)volMaster + (volRear   - 40) + surrRearTrim,   0, 79);
+  uint8_t rr  = rl;
+
+  fr6311Write(FR_FL,      fl);  fr6311Write(FR_FR_REG, fr_);
+  fr6311Write(FR_CENTER,  ct);  fr6311Write(FR_SUB,    sw);
+  fr6311Write(FR_RL,      rl);  fr6311Write(FR_RR,     rr);
+
+  // Tone controls (0x07-0x08) — surround modes override user bass/treble
+  uint8_t activeBass   = (surrMode != SM_OFF) ? surrBassOverride   : valBass;
+  uint8_t activeTreble = (surrMode != SM_OFF) ? surrTrebleOverride : valTreble;
+  fr6311Write(FR_BASS,    activeBass);
+  fr6311Write(FR_TREBLE,  activeTreble);
+
+  // Multi-Channel Input Configuration (0x09) - default stereo-to-multi
+  fr6311Write(FR_MULTICHAN, 0x00);
+
+  // REC Output Gain (0x0A) - unity gain
+  fr6311Write(FR_REC_GAIN, valGain);
+
+  // ADC Configuration & Attenuation (0x0B) - default
+  fr6311Write(FR_ADC_CFG, 0x00);
 }
 
 // -- Big-digit LCD functions --------------------------------------------------
@@ -1015,6 +1089,8 @@ void handleIR(uint32_t code) {
 
     case IR_SURROUND_KEY:
       surrMode = (SurrMode)((surrMode + 1) % SM_COUNT);
+      applySurroundPreset();
+      fr6311ApplyAll();
       break;
 
     case IR_RESET_KEY:
@@ -1255,6 +1331,23 @@ function PreviewPanel({ state }: PreviewPanelProps) {
     usbBoard,
   } = state;
   const channels: Channel[] = ["FL", "FR", "SL", "SR", "CENTER", "SUB"];
+  const [copiedFull, setCopiedFull] = useState(false);
+  const [copiedIR, setCopiedIR] = useState(false);
+
+  const handleCopyFull = async () => {
+    await navigator.clipboard.writeText(ARDUINO_CODE);
+    setCopiedFull(true);
+    setTimeout(() => setCopiedFull(false), 1800);
+  };
+
+  const handleCopyIR = async () => {
+    const irMap = ARDUINO_CODE.split("\n")
+      .filter((l: string) => l.trim().startsWith("#define IR_"))
+      .join("\n");
+    await navigator.clipboard.writeText(irMap);
+    setCopiedIR(true);
+    setTimeout(() => setCopiedIR(false), 1800);
+  };
 
   const eqBar = (value: number, min: number, max: number) => {
     const pct = ((value - min) / (max - min)) * 100;
@@ -1518,6 +1611,91 @@ function PreviewPanel({ state }: PreviewPanelProps) {
             </div>
           </div>
 
+          {/* ── Arduino Firmware Card ── */}
+          <div
+            className="rounded-xl p-4 flex flex-col gap-3"
+            style={{
+              background: "oklch(0.13 0.02 240)",
+              border: "1px solid oklch(0.22 0.04 220)",
+              boxShadow:
+                "inset 0 1px 0 oklch(0.28 0.02 240 / 0.5), 0 4px 16px oklch(0.05 0.01 240 / 0.6)",
+            }}
+          >
+            <span
+              className="font-brand text-[10px] tracking-[0.3em]"
+              style={{ color: "oklch(0.50 0.01 240)" }}
+            >
+              ARDUINO FIRMWARE
+            </span>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={handleCopyFull}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-brand tracking-[0.15em] transition-all duration-200"
+                style={{
+                  background: copiedFull
+                    ? "oklch(0.25 0.08 170)"
+                    : "oklch(0.20 0.04 220)",
+                  border: copiedFull
+                    ? "1px solid oklch(0.45 0.15 170)"
+                    : "1px solid oklch(0.30 0.04 220)",
+                  color: copiedFull
+                    ? "oklch(0.75 0.15 170)"
+                    : "oklch(0.70 0.06 220)",
+                }}
+                data-ocid="preview.firmware.button"
+              >
+                {copiedFull ? <Check size={12} /> : <Copy size={12} />}
+                {copiedFull ? "COPIED!" : "Copy Full .ino"}
+              </button>
+              <button
+                type="button"
+                onClick={handleCopyIR}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-brand tracking-[0.15em] transition-all duration-200"
+                style={{
+                  background: copiedIR
+                    ? "oklch(0.25 0.08 170)"
+                    : "oklch(0.20 0.04 220)",
+                  border: copiedIR
+                    ? "1px solid oklch(0.45 0.15 170)"
+                    : "1px solid oklch(0.30 0.04 220)",
+                  color: copiedIR
+                    ? "oklch(0.75 0.15 170)"
+                    : "oklch(0.70 0.06 220)",
+                }}
+                data-ocid="preview.irmap.button"
+              >
+                {copiedIR ? <Check size={12} /> : <Copy size={12} />}
+                {copiedIR ? "COPIED!" : "Copy IR Map"}
+              </button>
+            </div>
+            <div
+              className="relative rounded-lg overflow-hidden"
+              style={{
+                background: "oklch(0.09 0.02 240)",
+                border: "1px solid oklch(0.18 0.03 220)",
+              }}
+            >
+              <pre
+                className="font-lcd text-[10px] leading-[1.6] p-3 overflow-hidden"
+                style={{
+                  color: "oklch(0.70 0.12 195)",
+                  maxHeight: "120px",
+                  whiteSpace: "pre",
+                }}
+              >
+                {ARDUINO_CODE.split("\n").slice(0, 15).join("\n")}
+              </pre>
+              <div
+                className="absolute bottom-0 left-0 right-0 h-8 pointer-events-none"
+                style={{
+                  background:
+                    "linear-gradient(to bottom, transparent, oklch(0.09 0.02 240))",
+                }}
+              />
+            </div>
+          </div>
+
           {/* ── Read Only Banner ── */}
           <div
             className="flex items-center justify-center py-2 rounded-lg"
@@ -1555,7 +1733,37 @@ const MODES: ControlMode[] = [
   "BASS",
   "TREBLE",
 ];
-const SURROUND_MODES: SurroundMode[] = ["STEREO", "MOVIE", "MUSIC", "GAME"];
+const SURROUND_MODES: SurroundMode[] = ["STEREO", "MUSIC", "MOVIE", "GAME"];
+
+const SURROUND_MODE_INFO: Record<
+  SurroundMode,
+  { goal: string; bass: string; treble: string; result: string }
+> = {
+  STEREO: {
+    goal: "Flat, unprocessed output",
+    bass: "User-set",
+    treble: "User-set",
+    result: "Natural reference",
+  },
+  MUSIC: {
+    goal: "Sound wide ah kekkanum — stereo spread",
+    bass: "Medium (warm body)",
+    treble: "Slightly high (air & shimmer)",
+    result: "Songs spread feel · Stereo wide · Nice ambience",
+  },
+  MOVIE: {
+    goal: "Dialogue clear ah kekkanum — voice enhance",
+    bass: "Low (tight, controlled)",
+    treble: "High (sharp presence)",
+    result: "Voice sharp · Background control · Dialogue clear",
+  },
+  GAME: {
+    goal: "Immersive surround field",
+    bass: "User-set",
+    treble: "User-set",
+    result: "360° positioning",
+  },
+};
 const NAV_TABS = [
   "Dashboard",
   "Devices",
@@ -1948,6 +2156,46 @@ export default function App() {
                           </button>
                         ))}
                       </div>
+                      {/* Mode info panel */}
+                      {SURROUND_MODE_INFO[surroundMode] && (
+                        <div
+                          className="mt-2 rounded-lg px-3 py-2 text-[9px] font-lcd leading-relaxed border"
+                          style={{
+                            background: "oklch(0.10 0.04 195 / 0.55)",
+                            borderColor: "oklch(0.40 0.10 195 / 0.4)",
+                            color: "oklch(0.70 0.10 195)",
+                          }}
+                        >
+                          <div
+                            className="font-brand tracking-widest text-[8px] mb-1"
+                            style={{ color: "oklch(0.80 0.15 195)" }}
+                          >
+                            {surroundMode} —{" "}
+                            {SURROUND_MODE_INFO[surroundMode].goal}
+                          </div>
+                          <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
+                            <span style={{ color: "oklch(0.55 0.06 195)" }}>
+                              BASS
+                            </span>
+                            <span>{SURROUND_MODE_INFO[surroundMode].bass}</span>
+                            <span style={{ color: "oklch(0.55 0.06 195)" }}>
+                              TREBLE
+                            </span>
+                            <span>
+                              {SURROUND_MODE_INFO[surroundMode].treble}
+                            </span>
+                          </div>
+                          <div
+                            className="mt-1 pt-1 border-t"
+                            style={{
+                              borderColor: "oklch(0.30 0.06 195 / 0.4)",
+                              color: "oklch(0.65 0.12 195)",
+                            }}
+                          >
+                            {SURROUND_MODE_INFO[surroundMode].result}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
 
